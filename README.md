@@ -4,22 +4,52 @@
 
 Este projeto implementa um **chatbot de clima no Telegram** utilizando **n8n**. O usuário envia o nome de uma cidade brasileira e o bot responde com a **temperatura atual** em graus Celsius.
 
-O fluxo consulta a API gratuita do [OpenWeather](https://openweathermap.org/api), valida se a cidade existe no estado informado e devolve uma mensagem curta e amigável. Em caso de cidade inexistente ou UF incorreto, o bot informa o formato esperado de entrada.
+O fluxo consulta a API gratuita do [OpenWeather](https://openweathermap.org/api) e devolve uma mensagem curta e amigável. Em caso de cidade inexistente ou resposta inválida, o bot informa o formato esperado de entrada.
 
 **Tecnologias utilizadas:**
 
 - **n8n** — automação do workflow (Telegram Trigger, HTTP Request, IF, Set, Telegram Send)
-- **OpenWeather** — geocodificação e dados meteorológicos
+- **OpenWeather** — dados meteorológicos (`/data/2.5/weather`)
 - **Telegram Bot API** — recebimento e envio de mensagens
 - **Docker Compose** — ambiente local com n8n, Postgres, Redis e ngrok
 
-**Formato de entrada:** `Cidade,UF` (ex.: `Belo Horizonte,MG`). O sufixo `,BR` é acrescentado automaticamente pelo workflow.
+**Formato de entrada:** `Cidade,UF,BR` (ex.: `São Paulo,SP,BR`). Se o usuário enviar apenas `Cidade,UF`, o workflow acrescenta `,BR` automaticamente na variável `queue`.
+
+---
+
+## Conformidade com os requisitos do workflow
+
+| Requisito | Implementação |
+|-----------|---------------|
+| 1. Telegram Trigger | Nó **Telegram Trigger** (`updates: message`) |
+| 2. Variável `queue` | Nó **Normalizar Entrada** (Set) — trim, minúsculas, remove acentos, padroniza vírgulas |
+| 3. HTTP Request OpenWeather | Nó **Consultar OpenWeather** → `https://api.openweathermap.org/data/2.5/weather` com `q` ← `queue`, `units=metric`, `lang=pt_br`, `appid=$env.OPENWEATHER_API_KEY` |
+| 4. Extração e formatação | Nó **Formatar Mensagem Sucesso** — extrai `main.temp`, arredonda e monta a mensagem |
+| 5. Validação e erro | Nó **Validar Resposta IF** — verifica `main.temp` e `cod ≠ 404`; ramo falso → **Enviar Mensagem Erro** |
+| 6. Resposta Telegram | Nós **Enviar Mensagem Sucesso** e **Enviar Mensagem Erro** |
+| 7. Exportação e README | `workflow-telegram-chatbot.json` sem tokens embutidos; credenciais por referência |
+
+> **Sobre o parâmetro `queue`:** o enunciado define a variável `queue` no Set node. A API OpenWeather recebe essa variável no parâmetro de consulta `q` (nome exigido pela API).
+
+---
+
+## Estrutura do repositório
+
+| Arquivo / pasta | Descrição |
+|-----------------|-----------|
+| [`workflow-telegram-chatbot.json`](workflow-telegram-chatbot.json) | Workflow exportado para importar no n8n |
+| [`src/`](src/) | Lógica de negócio extraída do workflow (normalização, validação, formatação) |
+| [`tests/`](tests/) | Testes automatizados da lógica |
+| [`docker-compose.yml`](docker-compose.yml) | Stack Docker: n8n, Postgres, Redis e ngrok |
+| [`.env.example`](.env.example) | Modelo das variáveis de ambiente |
+| [`README.md`](README.md) | Esta documentação |
 
 ---
 
 ## Pré-requisitos
 
 - [Docker](https://www.docker.com/) e Docker Compose
+- [Node.js](https://nodejs.org/) 18+ (opcional, para rodar os testes em `src/`)
 - Conta gratuita no [OpenWeather](https://openweathermap.org/api) (para obter `OPENWEATHER_API_KEY`)
 - Bot criado no [@BotFather](https://t.me/BotFather) do Telegram (para obter `TELEGRAM_BOT_TOKEN`)
 - Conta no [ngrok](https://ngrok.com/) (túnel público necessário para o Telegram Trigger)
@@ -37,6 +67,12 @@ docker compose up -d
 ```
 
 Depois importe o workflow no n8n e configure as credenciais (seções abaixo).
+
+### Rodar testes da lógica (opcional)
+
+```bash
+npm test
+```
 
 ---
 
@@ -105,7 +141,7 @@ Necessária nos nós **Telegram Trigger**, **Enviar Mensagem Sucesso** e **Envia
 
 ### OpenWeather (`OPENWEATHER_API_KEY`)
 
-Não usa credencial do n8n. A chave é lida via `$env.OPENWEATHER_API_KEY` nos nós **Geocodificar Cidade** e **Consultar OpenWeather**.
+Não usa credencial do n8n. A chave é lida via `$env.OPENWEATHER_API_KEY` no nó **Consultar OpenWeather**.
 
 1. Defina `OPENWEATHER_API_KEY` no `.env`.
 2. Confirme no `docker-compose.yml`:
@@ -138,24 +174,23 @@ Se alterar o `WEBHOOK_URL`, desative e reative o workflow no n8n para re-registr
 
 ### 2. Testar no Telegram
 
-Envie mensagens no formato **`Cidade,UF`**.
+Envie mensagens no formato **`Cidade,UF,BR`** ou **`Cidade,UF`** (o sufixo `,BR` é acrescentado automaticamente).
 
 #### Sucesso
 
 | Você envia | O bot responde (exemplo) |
 |------------|--------------------------|
-| `Belo Horizonte,MG` | `🌤️ A temperatura em Belo Horizonte é de 18°C.` |
-| `Palmas, TO` | `🌤️ A temperatura em Palmas é de 27°C.` |
-| `Campinas, SP` | `🌤️ A temperatura em Campinas é de 15°C.` |
+| `Belo Horizonte,MG,BR` | `🌤️ A temperatura em Belo Horizonte é de 18°C.` |
+| `Palmas,TO,BR` | `🌤️ A temperatura em Palmas é de 27°C.` |
+| `Campinas,SP` | `🌤️ A temperatura em Campinas é de 15°C.` |
 
 #### Erro
 
 | Você envia | O bot responde |
 |------------|----------------|
-| `Porto Nacional, GO` | `❌ Cidade não encontrada. Use o formato Cidade,UF (ex.: São Paulo,SP).` |
-| `Mais, TO` | `❌ Cidade não encontrada. Use o formato Cidade,UF (ex.: São Paulo,SP).` |
+| `CidadeInexistente,XX,BR` | `❌ Cidade não encontrada. Use o formato Cidade,UF,BR (ex.: São Paulo,SP,BR).` |
 
-> `/start` não gera resposta. Envie diretamente `Cidade,UF`.
+> `/start` não gera resposta. Envie diretamente `Cidade,UF,BR` ou `Cidade,UF`.
 
 ### 3. Verificar execuções
 
@@ -167,23 +202,12 @@ No n8n: abra o workflow → aba **Executions** → confira status e nó com falh
 
 ```
 Telegram Trigger
-  → Normalizar Entrada (queue + uf + cidade)
-    → Geocodificar Cidade (OpenWeather Geo API)
-      → Validar Localização
-        → [válido]  Consultar OpenWeather → Formatar → Enviar Sucesso
-        → [inválido] Enviar Erro
+  → Normalizar Entrada (variável queue)
+    → Consultar OpenWeather (q ← queue, units, lang, appid)
+      → Validar Resposta IF
+        → [válido]  Formatar Mensagem Sucesso → Enviar Mensagem Sucesso
+        → [inválido] Enviar Mensagem Erro
 ```
-
----
-
-## Arquivos do repositório
-
-| Arquivo | Descrição |
-|---------|-----------|
-| [`workflow-telegram-chatbot.json`](workflow-telegram-chatbot.json) | Workflow para importar no n8n |
-| [`docker-compose.yml`](docker-compose.yml) | Stack Docker: n8n, Postgres, Redis e ngrok |
-| [`.env.example`](.env.example) | Modelo das variáveis de ambiente |
-| [`README.md`](README.md) | Esta documentação |
 
 ---
 
@@ -209,9 +233,9 @@ Reinicie após confirmar `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` no `docker-compose
 docker compose up -d n8n-editor n8n-worker
 ```
 
-### Cidade errada ou sem resposta no erro
+### Cidade não encontrada
 
-O workflow valida cidade + UF pela **Geo API** da OpenWeather antes de consultar a temperatura.
+Confirme o formato `Cidade,UF,BR` (ex.: `São Paulo,SP,BR`). A OpenWeather usa o valor da variável `queue` no parâmetro `q`.
 
 ---
 

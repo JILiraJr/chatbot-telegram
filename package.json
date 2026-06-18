@@ -1,0 +1,10 @@
+{
+  "name": "chatbot-telegram",
+  "version": "1.0.0",
+  "description": "Chatbot de clima no Telegram com n8n e OpenWeather",
+  "main": "src/normalizar-entrada.js",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "private": true
+}
